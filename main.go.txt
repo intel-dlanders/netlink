@@ -1,0 +1,97 @@
+package main
+
+import (
+	"fmt"
+	"net"
+	"os"
+
+	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netlink/nl"
+	"golang.org/x/sys/unix"
+)
+
+func showFilters(ifname string, parent uint32, parentstr string) {
+	link, _ := netlink.LinkByName(ifname)
+	filters, err := netlink.FilterList(link, parent)
+	if err == nil {
+		if len(filters) > 0 {
+			fmt.Printf("  %s:\n", parentstr)
+			for _, f := range filters {
+				fmt.Printf("    %s: %s\n", f.Type(), f.Attrs().String())
+			}
+		}
+	} else {
+		fmt.Printf("FilterList(%s) returned error: %s\n", ifname, err.Error())
+	}
+}
+
+func addSkbFilter(ifname string, parent uint32) {
+	link, _ := netlink.LinkByName(ifname)
+
+	skbedit := netlink.NewSkbEditAction()
+	skbedit.ActionAttrs.Index = 1
+	prio := uint32(42)
+	skbedit.Priority = &prio
+
+	cont := &netlink.GenericAction{
+		ActionAttrs: netlink.ActionAttrs{
+			Action: netlink.TC_ACT_UNSPEC,
+			Index:  1,
+		},
+	}
+
+	skbactions := []netlink.Action{skbedit, cont}
+
+	filterAttrs := netlink.FilterAttrs{
+		LinkIndex: link.Attrs().Index,
+		Handle:    netlink.MakeHandle(0, 1),
+		Parent:    parent,
+		Priority:  42,
+		Protocol:  unix.IPPROTO_TCP, // 3 = all, 6 = tcp, 17 = udp
+	}
+
+	flow := &netlink.Flower{
+		FilterAttrs: filterAttrs,
+		EthType:     unix.ETH_P_IP,
+		SrcIP:       net.IPv4(31, 91, 82, 201),
+		SrcPort:     32123,
+		Actions:     skbactions,
+	}
+
+	if err := netlink.FilterAdd(flow); err != nil {
+		fmt.Printf("%s\n", fmt.Errorf("failed to create flower filter on %q: %s", ifname, err))
+	}
+}
+
+func showIfFilters(ifstr string) {
+	for _, ifstr := range os.Args[1:] {
+		//link, _ := netlink.LinkByName(ifstr)
+		fmt.Printf("Filters for %s:\n", ifstr)
+		handles := [...]int{netlink.HANDLE_NONE, netlink.HANDLE_ROOT, netlink.HANDLE_MIN_INGRESS, netlink.HANDLE_MIN_EGRESS, netlink.HANDLE_INGRESS}
+		handlestrs := [...]string{"none", "root", "min ingress", "min egress", "ingress"}
+		for i, h := range handles {
+			showFilters(ifstr, uint32(h), handlestrs[i])
+		}
+	}
+}
+
+func main() {
+	lo, _ := netlink.LinkByName("lo")
+	addr, _ := netlink.ParseAddr("169.254.169.254/32")
+	netlink.AddrAdd(lo, addr)
+
+	addrs, _ := netlink.AddrList(nil, nl.FAMILY_V4)
+	if addrs != nil {
+		fmt.Print("AddrList:\n")
+
+		for _, value := range addrs {
+			fmt.Printf("- %s: %s\n", value.IPNet, value.Label)
+		}
+		fmt.Print("\n")
+	}
+
+	ifname := os.Args[1]
+	showIfFilters(ifname)
+	addSkbFilter(ifname, netlink.HANDLE_MIN_EGRESS)
+	showIfFilters(ifname)
+}
