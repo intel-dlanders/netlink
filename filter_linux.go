@@ -111,6 +111,10 @@ func (filter *Flower) encode(parent *nl.RtAttr) error {
 			nl.TCA_FLOWER_KEY_IPV4_SRC, nl.TCA_FLOWER_KEY_IPV6_SRC,
 			nl.TCA_FLOWER_KEY_IPV4_SRC_MASK, nl.TCA_FLOWER_KEY_IPV6_SRC_MASK)
 	}
+	if filter.Attrs().Protocol != 0 {
+		ip_proto := htons(filter.Attrs().Protocol)
+		parent.AddRtAttr(nl.TCA_FLOWER_KEY_IP_PROTO, ip_proto[1:])
+	}
 	if filter.SrcPort != 0 {
 		parent.AddRtAttr(nl.TCA_FLOWER_KEY_TCP_SRC, htons(filter.SrcPort))
 	}
@@ -130,14 +134,11 @@ func (filter *Flower) encode(parent *nl.RtAttr) error {
 	if filter.EncKeyId != 0 {
 		parent.AddRtAttr(nl.TCA_FLOWER_KEY_ENC_KEY_ID, htonl(filter.EncKeyId))
 	}
-	if filter.Attrs().Protocol != 0 {
-		ip_proto := htons(filter.Attrs().Protocol)
-		parent.AddRtAttr(nl.TCA_FLOWER_KEY_IP_PROTO, ip_proto[1:])
-	}
 	actionsAttr := parent.AddRtAttr(nl.TCA_FLOWER_ACT, nil)
 	if err := EncodeActions(actionsAttr, filter.Actions); err != nil {
 		return err
 	}
+	parent.AddRtAttr(nl.TCA_FLOWER_FLAGS, htonl(0))
 	if filter.EthType != 0 {
 		parent.AddRtAttr(nl.TCA_FLOWER_KEY_ETH_TYPE, htons(filter.EthType))
 	}
@@ -628,7 +629,7 @@ func EncodeActions(attr *nl.RtAttr, actions []Action) error {
 			table := attr.AddRtAttr(tabIndex, nil)
 			tabIndex++
 			table.AddRtAttr(nl.TCA_ACT_KIND, nl.ZeroTerminated("gact"))
-			aopts := table.AddRtAttr(nl.TCA_ACT_OPTIONS, nil)
+			aopts := table.AddRtAttr(nl.TCA_ACT_OPTIONS|unix.NLA_F_NESTED, nil)
 			gen := nl.TcGen{}
 			toTcGen(action.Attrs(), &gen)
 			aopts.AddRtAttr(nl.TCA_GACT_PARMS, gen.Serialize())
